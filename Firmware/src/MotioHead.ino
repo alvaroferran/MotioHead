@@ -5,7 +5,7 @@ SoftwareSerial bt(4, 3); // RX, TX
 
 #define A 0X28  //I2C address selection pin LOW
 #define B 0x29  //                          HIGH
-BNO055 sensor(A);
+BNO055 sensor(A), reference(B);
 
 
 
@@ -13,8 +13,8 @@ void setup(){
     Wire.begin();
     Serial.begin(19200);
     bt.begin(9600);
-    // bt.print("AT+NAMEMotioGlove\r\n");
     sensor.init();
+    reference.init();
 }
 
 
@@ -40,6 +40,23 @@ int checkEnable(double uD, int dir){
     enOld=en;
     lookedUpOld=lookedUp;
     return en;
+}
+
+
+
+double normalizeLeftRight(double head, double reference){
+    double lR, axisMin=10, axisMax=60;
+    lR=head-reference;
+    if (lR<0) lR+=360;    //Force the output between 0-360
+    //Resting zone
+    if( (lR<=axisMin && lR<180) || (lR>=360-axisMin && lR>=180) ) lR=0;
+    //Map from angles to values between -1 and 1
+    if(lR>axisMin     && lR<180)  lR=map(lR, axisMin, axisMax,0,1);
+    if(lR<360-axisMin && lR>=180) lR=map(lR,360-axisMin, 360-axisMax, 0, -1);
+    //Limit max values
+    if(lR>1)  lR=1;
+    if(lR<-1) lR=-1;
+    return lR;
 }
 
 
@@ -89,25 +106,28 @@ double setSpeed(int dir, double uD){
 
 
 void loop(){
-    static double upDown, leftRight,twist;
+    static double upDown, leftRight,twist, referenceAngle, yaw;
     static int direction=0;
     double speed;
     int enable;
 
     sensor.readEul();   //Read angles
     upDown=sensor.euler.z;
-    leftRight=sensor.euler.x;
+    yaw=sensor.euler.x;
     twist=sensor.euler.y;
+
+    reference.readEul();    //Read reference orientation, replace with MAG3110
+    referenceAngle=reference.euler.x;
 
     enable=checkEnable(upDown, direction);
 
     if(enable==1){
+        leftRight=normalizeLeftRight(yaw, referenceAngle);
         upDown=normalizeUpDown(upDown);
         direction=selectDirection(twist);
         speed=setSpeed(direction, upDown);
-
-        Serial.println("Speed:  " + String(speed));
-        bt.println("Speed:  " + String(speed));
+        Serial.println("Angle: "+String(leftRight)+" Speed:  " + String(speed));
+        // bt.println(String(leftRight)+";"+String(speed));
     }
     delay(100);
 }
